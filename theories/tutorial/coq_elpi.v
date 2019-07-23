@@ -438,18 +438,17 @@ Elpi Query lp:{{
 
 (**
     Implicit arguments are not synthesized automatically
-    when quotations are used. Implicits are represented by a special
-    term constructor called "hole". It is the job of the elaborator
+    when quotations are used. It is the job of the elaborator
     to synthesize them.
 *)
 
 Elpi Query lp:{{
 
-  T = {{ fun a b : nat => a = b }},
+  T = (fun `ax` {{nat}} a\ {{ fun b : nat => lp:a = b }}),
   coq.say "before:" T,
   % this is the standard Coq elaborator (but you may write your own ;-)
   coq.elaborate T _ T1,
-  coq.say "after:" T1
+  coq.say "after:" T1.
 
 }}.
      

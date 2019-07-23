@@ -57,7 +57,21 @@ let in_coq_name ~depth t =
   | E.UnifVar _ -> Name.Anonymous
   | _ -> err Pp.(str"Not a name: " ++ str (API.RawPp.Debug.show_term t))
 
+let in_coq_fresh_name ~depth name ~avoid:names =
+  let mk_fresh =
+    let i = ref 0 in
+    fun n ->
+      incr i;
+        (Id.of_string_soft
+          (Printf.sprintf "_elpi_renamed_%s_%d_" n !i)) in
+  match in_coq_name ~depth name with
+  | Name.Anonymous -> mk_fresh "Anonymous"
+  | Name.Name id as x when List.mem x names -> mk_fresh (Id.to_string id)
+  | Name.Name id -> id
+
 let in_coq_annot ~depth t = Context.make_annot (in_coq_name ~depth t) Sorts.Relevant
+
+let in_coq_fresh_annot ~depth t ~avoid = Context.make_annot (in_coq_fresh_name ~depth t ~avoid) Sorts.Relevant
 
 (* universes *)
 let univin, isuniv, univout, univ_to_be_patched =
@@ -661,7 +675,7 @@ let is_prod ~depth x =
   | E.App(s,_,[_;_]) -> prodc == s
   | _ -> false
 
-exception Undeclared_evar of int (*depth*) * E.term
+(*exception Undeclared_evar of int (*depth*) * E.term*)
 
 let pp_cst fmt { E.goal = (depth,concl); context } =
   Format.fprintf fmt "%d |> %a |- %a" depth
@@ -676,12 +690,12 @@ let find_evar var syntactic_constraints =
     | E.App(c,x,[t;rx]) when c == evarc ->
           Some(E.look ~depth x,E.look ~depth rx,t)
     | _ -> None in
-    CList.find_map (fun ({ E.goal = (depth,concl); context } as cst) ->
-      if debug () then
-        Feedback.msg_debug Pp.(str"lp2term: evar: constraint: " ++
-          str(pp2string pp_cst cst)); 
+  CList.find_map (fun ({ E.goal = (depth,concl); context } as cst) ->
       match is_evar depth concl with
       | Some(E.UnifVar(raw,_),E.UnifVar(r,_),ty) when F.Elpi.(equal raw var || equal r var) ->
+          if debug () then
+            Feedback.msg_debug Pp.(str"lp2term: evar: found relevant constraint: " ++
+              str(pp2string pp_cst cst)); 
           Some (context, raw, r, (depth,ty))
       | _ -> None) syntactic_constraints
 
@@ -692,41 +706,22 @@ let nth_name ~depth l n =
   | Name id -> id
   | Anonymous -> raise (Undeclared_ctx_entry(depth,E.mkConst n))
 
-let get_id = function Name.Anonymous -> Id.of_string "_" | Name x -> x
-
-
 let rec of_elpi_ctx syntactic_constraints depth hyps state =
 
-  let mk_fresh =
-    let i = ref 0 in
-    fun n ->
-      incr i;
-      Name.mk_name
-        (Id.of_string_soft
-          (Printf.sprintf "_elpi_renamed_%s_%d_" n !i)) in
-  let in_coq_fresh_name ~depth name names =
-    match in_coq_name ~depth name with
-    | Name.Anonymous -> mk_fresh "Anonymous"
-    | Name.Name id as x when List.mem x names ->
-        mk_fresh (Id.to_string id)
-    | x -> x in
+  let aux names lctx depth state t =
+    lp2constr ~tolerate_undef_evar:false syntactic_constraints names lctx ~depth state t in
 
-  let aux names depth state t =
-    lp2constr ~tolerate_undef_evar:false syntactic_constraints names ~depth state t in
-
-  let of_elpi_ctx_entry (names,n_names as proof_ctx) ~depth e state =
+  let of_elpi_ctx_entry (names,n_names as proof_ctx) lctx ~depth e state =
     match e with
     | `Decl(name,ty) ->
-        let name = in_coq_fresh_name ~depth name names in
-        let id = get_id name in
-        let state, ty, gls = aux proof_ctx depth state ty in
-        state, name, Context.Named.Declaration.LocalAssum(Context.make_annot id Sorts.Relevant,ty), gls
+        let name = in_coq_fresh_annot ~depth name ~avoid:names in
+        let state, ty, gls = aux proof_ctx lctx depth state ty in
+        state, Context.binder_name name, Context.Named.Declaration.LocalAssum(name,ty), gls
     | `Def(name,ty,bo) ->
-        let name = in_coq_fresh_name ~depth name names in
-        let id = get_id name in
-        let state, ty, gl1 = aux proof_ctx depth state ty in
-        let state, bo, gl2 = aux proof_ctx depth state bo in
-        state, name, Context.Named.Declaration.LocalDef(Context.make_annot id Sorts.Relevant,bo,ty), gl1 @ gl2
+        let name = in_coq_fresh_annot ~depth name ~avoid:names in
+        let state, ty, gl1 = aux proof_ctx lctx depth state ty in
+        let state, bo, gl2 = aux proof_ctx lctx depth state bo in
+        state, Context.binder_name name, Context.Named.Declaration.LocalDef(name,bo,ty), gl1 @ gl2
   in
 
   let select_ctx_entries { E.hdepth = depth; E.hsrc = t } =
@@ -759,8 +754,8 @@ let rec of_elpi_ctx syntactic_constraints depth hyps state =
       then ctx_entries ctx (n@[Anonymous],n_no+1) (i::to_restrict) state gls (i+1)
       else
         let d, e = Int.Map.find i dbl2ctx in
-        let state, name, e, gl1 = of_elpi_ctx_entry proof_ctx ~depth:d e state in
-        ctx_entries (e::ctx) (n@[name],n_no+1) to_restrict state (gl1 :: gls) (i+1)
+        let state, name, e, gl1 = of_elpi_ctx_entry proof_ctx [] ~depth:d e state in
+        ctx_entries (e::ctx) (n@[Name.Name name],n_no+1) to_restrict state (gl1 :: gls) (i+1)
   in
     ctx_entries [] ([],0) [] state [] 0
 
@@ -771,12 +766,12 @@ let rec of_elpi_ctx syntactic_constraints depth hyps state =
 (*   \- proof_ctx                                                    *)
 (* ***************************************************************** *)
 
-and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) ~depth state t =
+and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) lctx ~depth state t =
   let aux = lp2constr ~tolerate_undef_evar syntactic_constraints ctx in
-  let aux_lam ~depth s t = match E.look ~depth t with
-  | E.Lam t -> aux ~depth:(depth+1) s t
+  let aux_lam lctx ~depth s t = match E.look ~depth t with
+  | E.Lam t -> aux lctx ~depth:(depth+1) s t
   | E.UnifVar(r,args) ->
-       aux ~depth:(depth+1) s (E.mkUnifVar r ~args:(List.map (U.move ~from:depth ~to_:(depth+1)) args @ [E.mkConst depth]) state)
+       aux lctx ~depth:(depth+1) s (E.mkUnifVar r ~args:(List.map (U.move ~from:depth ~to_:(depth+1)) args @ [E.mkConst depth]) state)
   | _ -> err Pp.(str"HOAS: expecting a lambda, got: " ++
            str(pp2string (P.term depth) t)) in
   match E.look ~depth t with
@@ -794,17 +789,21 @@ and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) 
      end
  (* binders *)
   | E.App(c,name,[s;t]) when lamc == c || prodc == c ->
-      let name = in_coq_annot ~depth name in
-      let state, s, gl1 = aux ~depth state s in
-      let state, t, gl2 = aux_lam ~depth state t in
-      if lamc == c then state, EC.mkLambda (name,s,t), gl1 @ gl2
-      else state, EC.mkProd (name,s,t), gl1 @ gl2
+      let avoid = names @ List.map (fun x -> Name.Name (Context.Named.Declaration.get_id x)) lctx in
+      let name = in_coq_fresh_annot ~depth name ~avoid in
+      let state, s, gl1 = aux lctx ~depth state s in
+      let lctx = Context.Named.Declaration.LocalAssum(name,s) :: lctx in
+      let state, t, gl2 = aux_lam lctx ~depth state t in
+      if lamc == c then state, EC.mkLambda (Context.map_annot Name.mk_name name,s,t), gl1 @ gl2
+      else state, EC.mkProd (Context.map_annot Name.mk_name name,s,t), gl1 @ gl2
   | E.App(c,name,[s;b;t]) when letc == c ->
-      let name = in_coq_annot ~depth name in
-      let state, s, gl1 = aux ~depth state s in
-      let state, b, gl2 = aux ~depth state b in
-      let state, t, gl3 = aux_lam ~depth state t in
-      state, EC.mkLetIn (name,b,s,t), gl1 @ gl2 @ gl3
+      let avoid = names @ List.map (fun x -> Name.Name (Context.Named.Declaration.get_id x)) lctx in
+      let name = in_coq_fresh_annot ~depth name ~avoid in
+      let state, s, gl1 = aux lctx ~depth state s in
+      let state, b, gl2 = aux lctx ~depth state b in
+      let lctx = Context.Named.Declaration.LocalAssum(name,s) :: lctx in
+      let state, t, gl3 = aux_lam lctx ~depth state t in
+      state, EC.mkLetIn (Context.map_annot Name.mk_name name,b,s,t), gl1 @ gl2 @ gl3
       
   | E.Const n ->
                   
@@ -821,17 +820,17 @@ and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) 
   | E.App(c,x,[]) when appc == c ->
        (match U.lp_list_to_list ~depth x with
        | x :: xs -> 
-          let state, x, gl1 = aux ~depth state x in
-          let state, xs, gl2 = API.Utils.map_acc (aux ~depth) state xs in
+          let state, x, gl1 = aux lctx ~depth state x in
+          let state, xs, gl2 = API.Utils.map_acc (aux lctx ~depth) state xs in
           state, EC.mkApp (x, Array.of_list xs), gl1 @ gl2
        | _ -> assert false) (* TODO *)
   
   (* match *)
   | E.App(c,t,[rt;bs]) when matchc == c ->
-      let state, t, gl1 = aux ~depth state t in
-      let state, rt, gl2 = aux ~depth state rt in
+      let state, t, gl1 = aux lctx ~depth state t in
+      let state, rt, gl2 = aux lctx ~depth state rt in
       let state, bt, gl3 =
-        API.Utils.map_acc (aux ~depth) state (U.lp_list_to_list ~depth bs) in
+        API.Utils.map_acc (aux lctx ~depth) state (U.lp_list_to_list ~depth bs) in
       let ind =
         (* XXX fixme reduction *)
         let { sigma } = S.get engine state in
@@ -851,8 +850,8 @@ and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) 
  (* fix *)
   | E.App(c,name,[rno;ty;bo]) when fixc == c ->
       let name = in_coq_annot ~depth name in
-      let state, ty, gl1 = aux ~depth state ty in
-      let state, bo, gl2 = aux_lam ~depth state bo in
+      let state, ty, gl1 = aux lctx ~depth state ty in
+      let state, bo, gl2 = aux_lam lctx ~depth state bo in
       let rno =
         match E.look ~depth rno with
         | E.CData n when CD.is_int n -> CD.to_int n
@@ -873,7 +872,7 @@ and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) 
           Feedback.msg_debug Pp.(str"lp2term: evar: already in Coq: " ++
           Evar.print ext_key);
 
-        let state, args, gl1 = API.Utils.map_acc (aux ~depth) state args in
+        let state, args, gl1 = API.Utils.map_acc (aux lctx ~depth) state args in
         let args = List.rev args in
         let section_args =
           CList.rev_map EC.mkVar (section_ids (S.get engine state).env) in
@@ -887,17 +886,9 @@ and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) 
                        CArray.rev_of_list args1)
           else EC.mkEvar (ext_key,Array.of_list (args @ section_args)) in
         state, ev, gl1
-      with Not_found ->
+      with Not_found -> try
         let context, elpi_revk, elpi_evk, ty =
-          try
-            find_evar elpi_evk (E.constraints syntactic_constraints)
-          with
-          | Not_found when tolerate_undef_evar ->
-              (* pretty printing should not fail *)
-              [], elpi_evk, elpi_evk, (0, in_elpi_sort Sorts.prop)
-          | Not_found ->
-              raise (Undeclared_evar(depth,t))
-        in
+          find_evar elpi_evk (E.constraints syntactic_constraints) in
         let state, k, gl1 = declare_evar ~tolerate_undef_evar elpi_revk elpi_evk syntactic_constraints context ty state in
         if debug () then Feedback.msg_debug Pp.(str"lp2term: evar: declared new: " ++
           Evar.print k ++ str" = " ++ str(F.Elpi.show elpi_evk));
@@ -912,8 +903,16 @@ and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) 
         if debug () then Feedback.msg_debug Pp.(str"lp2term: evar: instance: " ++
            str (pp2string (P.term depth) t) ++ str"  ->  " ++
            str (pp2string (P.term depth) x));
-        let state, x, gls = aux ~depth state x in
+        let state, x, gls = aux lctx ~depth state x in
         state, x, gl1 @ gls
+      with (*
+          | Not_found when tolerate_undef_evar ->
+              (* pretty printing should not fail *)
+              [], elpi_evk, elpi_evk, (0, in_elpi_sort Sorts.prop)
+          |*)
+         Not_found ->
+           create_evar_thin_air ~tolerate_undef_evar syntactic_constraints ctx lctx ~depth state elpi_evk orig_args
+
       end
 
   (* errors *)
@@ -922,8 +921,24 @@ and lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names as ctx) 
                str (pp2string P.(term depth) t))
   | _ -> err Pp.(str"Not a HOAS term:" ++ str (P.Debug.show_term t))
 
-  (* evar info read back *)
+(* evar info out of thin air *)
+and create_evar_thin_air ~tolerate_undef_evar syntactic_constraints ctx lctx ~depth state elpi_evk _orig_args =
+(* ERR: la devo applicare al lctx che è in orig_args *)
+        if debug () then Feedback.msg_debug Pp.(str"lp2term: evar: out of thin air: " ++
+          prlist_with_sep spc Names.Name.print (fst ctx) ++ str";" ++
+          prlist_with_sep spc Names.Id.print (List.map Context.Named.Declaration.get_id lctx) ++
+          str " |- " ++ prlist_with_sep spc Names.Id.print (List.map Context.Named.Declaration.get_id (EConstr.named_context (get_env state))));
+  let env = EConstr.push_named_context lctx (get_env state) in
+  let sigma = get_sigma state in
+  let sigma, (ty, _) = Evarutil.new_type_evar ~naming:(Namegen.IntroFresh (Names.Id.of_string "elpi_evar")) env sigma Evd.univ_rigid in
+  let sigma, t = Evarutil.new_evar~typeclass_candidate:false ~naming:(Namegen.IntroFresh (Names.Id.of_string "elpi_evar")) env sigma ty in
+  let t_k, _ = EConstr.destEvar sigma t in
+  let state = S.update engine state (fun e -> {e with sigma}) in
+  let state = S.update UVMap.uvmap state (UVMap.add elpi_evk t_k) in
+  (* TODO: going back the constraint is not there! *)
+  lp2constr ~tolerate_undef_evar syntactic_constraints ctx lctx ~depth state (E.mkUnifVar elpi_evk ~args:[] state)
 
+(* evar info read back *)
 and declare_evar ~tolerate_undef_evar elpi_revk elpi_evk syntactic_constraints ctx (depth_concl,concl) state =
   let state, named_ctx, (names,n_names), to_restrict, gl1 = (* TODO: honor restrict *)
     of_elpi_ctx syntactic_constraints depth_concl ctx state in
@@ -931,7 +946,7 @@ and declare_evar ~tolerate_undef_evar elpi_revk elpi_evk syntactic_constraints c
     Feedback.msg_debug Pp.(str"lp2term: evar: new: " ++ int depth_concl ++ str" |> " ++
       pr_sequence Name.print names ++ str" |- " ++
       str(pp2string (P.term depth_concl) concl));
-  let state, ty, gl2 = lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names) ~depth:depth_concl state concl in
+  let state, ty, gl2 = lp2constr ~tolerate_undef_evar syntactic_constraints (names,n_names) [] ~depth:depth_concl state concl in
   let named_ctx =
     named_ctx @ EC.named_context (S.get engine state).env in
   if debug () then
@@ -956,14 +971,14 @@ let lp2constr ~tolerate_undef_evar syntactic_constraints proof_ctx ~depth state 
       Feedback.msg_debug Pp.(str"lp2term: depth=" ++ int depth ++
         str " ctx=[" ++ pr_sequence Name.print (fst proof_ctx) ++ str"]" ++
         str " term=" ++ str (pp2string (P.term depth) t));
-    let state, t, gls = lp2constr ~tolerate_undef_evar syntactic_constraints proof_ctx ~depth state t in
+    let state, t, gls = lp2constr ~tolerate_undef_evar syntactic_constraints proof_ctx ~depth [] state t in
     if debug () then
       Feedback.msg_debug Pp.(str"lp2term: out=" ++ 
         (Printer.pr_econstr_env (S.get engine state).env
                                 (S.get engine state).sigma t) ++
-        str "elpi2coq=" ++ str(UVMap.show (S.get UVMap.uvmap state)));
+        spc () ++ str "elpi2coq=" ++ str(UVMap.show (S.get UVMap.uvmap state)));
     state, t, gls
-  with
+  with (*
   | Undeclared_evar(x_depth,x) ->
     err Pp.(str"The term "++
       str(pp2string P.(term depth) t) ++ 
@@ -972,7 +987,7 @@ let lp2constr ~tolerate_undef_evar syntactic_constraints proof_ctx ~depth state 
       str" that has no declared type in the constraint store:" ++ spc() ++
       str(pp2string P.(list (fun fmt { E.goal = (depth,t) } ->
              term depth fmt t) ", ")
-          (E.constraints syntactic_constraints)))
+          (E.constraints syntactic_constraints)))*)
   | Undeclared_ctx_entry(x_depth,x) ->
     err Pp.(str"The term "++
       str(pp2string P.(term depth) t) ++ 
@@ -984,7 +999,7 @@ let lp2constr ~tolerate_undef_evar syntactic_constraints proof_ctx ~depth state 
 let of_elpi_ctx syntactic_constraints depth hyps state =
   try
     of_elpi_ctx syntactic_constraints depth hyps state
-  with
+  with(*
   | Undeclared_evar(x_depth,x) ->
     err Pp.(str"The hypothetical context "++
       str(pp2string P.(list (fun fmt { E.hdepth; hsrc } ->
@@ -994,7 +1009,7 @@ let of_elpi_ctx syntactic_constraints depth hyps state =
       str" that has no declared type in the constraint store:" ++ spc() ++
       str(pp2string P.(list (fun fmt { E.goal = (depth,t) } ->
              term depth fmt t) ",")
-          (E.constraints syntactic_constraints)))
+          (E.constraints syntactic_constraints)))*)
   | Undeclared_ctx_entry(x_depth,x) ->
       err Pp.(str"The hypothetical context "++
       str(pp2string P.(list (fun fmt { E.hdepth; hsrc } ->
@@ -1257,6 +1272,10 @@ let tclSOLUTION2EVD { API.Data.constraints; assignments; state } =
     Proofview.shelve_goals shelved_goals
   ]
 
+let rec mknLam n t =
+  if n = 0 then t
+  else mknLam (n-1) (E.mkLam t)
+
 let set_current_sigma ~depth state sigma =
   let state = set_sigma state sigma in
   let state, assignments, decls, to_remove =
@@ -1269,8 +1288,10 @@ let set_current_sigma ~depth state sigma =
       | Evd.Evar_empty -> acc
       | Evd.Evar_defined c ->
           let state, t, dec =
-            constr2lp proof_names ~calldepth:depth ~depth state c in
-          let ass = E.mkAppSL "=" [E.mkUnifVar elpi_evk ~args:(CList.init ctx_len E.mkBound) state; t] in
+            constr2lp proof_names ~calldepth:ctx_len ~depth:ctx_len state c in
+          let t = mknLam ctx_len t in
+          let t = Elpi.API.Utils.move ~from:0 ~to_:depth t in
+          let ass = E.mkAppSL "=" [E.mkUnifVar elpi_evk ~args:[] state; t] in
           state, ass :: assignments, dec :: decls, k :: to_remove
       ) (S.get UVMap.uvmap state) (state,[],[],[]) in
   let state = S.update UVMap.uvmap state (List.fold_right UVMap.remove_host to_remove) in

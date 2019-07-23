@@ -13,7 +13,6 @@ module Pr = API.BuiltInPredicate
 module G = Globnames
 
 open Names
-open Glob_term
 
 open Coq_elpi_utils
 open Coq_elpi_HOAS
@@ -980,20 +979,14 @@ be distinct).|};
           "unresolved holes), shall be lifted in the future")))),
   (fun t _ _ ~depth hyps constraints state ->
      let state, env, sigma, coq_proof_ctx_names, gls = get_current_env_sigma ~depth hyps constraints state in
-     let gt =
+     (*let gt =
        (* To avoid turning named universes into unnamed ones *)
        Flags.with_option Constrextern.print_universes
          (Detyping.detype Detyping.Now false Id.Set.empty env sigma) t in
-     let gt =
-       let c, _ = EConstr.destConst sigma (in_coq_hole ()) in
-       let rec map x = match DAst.get x with
-         | GRef(Globnames.ConstRef x,None)
-           when Constant.equal c x ->
-              mkGHole
-         | _ -> Glob_ops.map_glob_constr map x in
-       map gt in
+     
      let sigma, uj_val, uj_type =
-       Pretyping.understand_tcc_ty env sigma gt in
+       Pretyping.understand_tcc_ty env sigma gt in*)
+     let sigma, uj_type = Typing.type_of env sigma t in let uj_val = t in
      let state, assignments = set_current_sigma ~depth state sigma in
      state, !: uj_type +! uj_val, gls @ assignments)),
   DocAbove);

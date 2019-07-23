@@ -78,42 +78,51 @@ quote GR (app [GR, T1, T2]) {{ add lp:R1 lp:R2 }} L :- !,
   quote GR T2 R2 L.
 quote _ T {{ var lp:R }} L :- mem L T R.
 
-solve [trm Op] [goal Ctx P {{ @eq lp:_ lp:A lp:B }} _] _ :-std.time (
+solve [trm Op] [goal Ctx P {{ lp:A = lp:B }} _] _ :-std.time (
   quote Op A AstA L,
   quote Op B AstB L,
   close L) Tm1,
   !,
-  Ty = {{ @eq _ (interp lp:Op lp:L lp:AstA) (interp lp:Op lp:L lp:AstB)}},
-  std.time (Ctx => coq.elaborate {{ (fun x : lp:Ty => x) _ }} _ _) Tm2,
+  Ty = {{ (interp lp:Op lp:L lp:AstA) = (interp lp:Op lp:L lp:AstB)}},
+  coq.say Ty,
+  std.time (Ctx => coq.elaborate {{ (fun x : lp:Ty => x) _ }} _ E) Tm2,
+  coq.say "elab=" E ":" Ty,
   std.time (P = {{ (fun x : lp:Ty => x) _ }}) Tm3,
   coq.say Tm1 Tm2 Tm3.
 
 }}.
 Elpi Typecheck.
-Tactic Notation "reify_step2" constr(x) := elpi reify (x).
+Tactic Notation "reify_step" constr(x) := elpi reify (x).
+
+
+Example axpypzpt2 (x : Z) : x = x.
+Proof.
+  Set Printing All.
+reify_step Z.add.
+stop.
 
 (* Now adding the reification phase. *)
 
 Class Reify (op : Z -> Z -> Z) (t : lang) (l : list Z) (x : Z).
 
-Program Instance addRf op x y l e1 e2 {_ : Reify op e1 l x} {_ : Reify op e2 l y} :
-   Reify op (add e1 e2) l (op x y) | 1.
+Instance addRf op x y l e1 e2 {_ : Reify op e1 l x} {_ : Reify op e2 l y} :
+   Reify op (add e1 e2) l (op x y) | 1 := {}.
 
 Class Nth (i : nat) (l : list Z) (e : Z).
 
-Program Instance nth0 t l : Nth 0 (t :: l) t | 0.
+Instance nth0 t l : Nth 0 (t :: l) t | 0 := {}.
 
-Program Instance nthS i t l t'
-   {_ : Nth i l t} : Nth (S i) (t' :: l) t | 2.
+Instance nthS i t l t'
+   {_ : Nth i l t} : Nth (S i) (t' :: l) t | 2 := {}.
 
-Program Instance varRf op e i l 
-  {_ : Nth i l e} : Reify op (var i) l e | 100.
+Instance varRf op e i l 
+  {_ : Nth i l e} : Reify op (var i) l e | 100 := {}.
 
 Class closed (l : list Z).
 
-Program Instance closed0 : closed nil.
+Instance closed0 : closed nil := {}.
 
-Program Instance closed1 a l {_ : closed l} : closed (a :: l).
+Instance closed1 a l {_ : closed l} : closed (a :: l) := {}.
 
 Definition reify_trigger op (expr : lang) (lvar : list Z) (term : Z)
  {_ : Reify op expr lvar term} `{closed lvar} := (lvar, expr).
@@ -127,7 +136,9 @@ end).
 
 Example axpypzpt2 x y z t : (x + y) + (z + t) = x + (y + z) + t.
 Proof.
+  Set Printing All.
 reify_step Z.add.
+stop
 now apply (norm_c2 Z.add_assoc); compute.
 Qed.
 

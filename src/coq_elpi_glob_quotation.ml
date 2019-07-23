@@ -7,6 +7,7 @@ module E = API.RawData
 module U = API.Utils
 module S = API.State
 module Q = API.Quotation
+module F = API.FlexibleData
 
 open Coq_elpi_HOAS
 
@@ -136,7 +137,11 @@ let rec gterm2lp depth state x = match (DAst.get x) (*.CAst.v*) with
             state, mkApp ~depth hd args
       end
 
-  | GHole _ -> state, in_elpi_hole
+  | GHole (_,_,None) ->
+      let state, uv = F.Elpi.make ~lvl:0 state in
+      state, E.mkUnifVar uv ~args:(CList.init depth E.mkBound) state
+
+  | GHole _ -> nYI "(glob)HOAS for GHole"
 
   | GCast(t,(Glob_term.CastConv c_ty | Glob_term.CastVM c_ty | Glob_term.CastNative c_ty)) ->
       let state, t = gterm2lp depth state t in
@@ -144,7 +149,6 @@ let rec gterm2lp depth state x = match (DAst.get x) (*.CAst.v*) with
       let self = E.mkConst depth in
       state, in_elpi_let Names.Name.Anonymous t c_ty self
   | GCast _ -> nYI "(glob)HOAS for GCast"
-      
 
   | GEvar(_k,_subst) -> nYI "(glob)HOAS for GEvar"
   | GPatVar _ -> nYI "(glob)HOAS for GPatVar"
