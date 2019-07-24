@@ -946,7 +946,7 @@ be distinct).|};
   MLCode(Pred("coq.sigma.print",
     Read "Prints Coq's Evarmap and the mapping to/from Elpi's unification variables",
     (fun ~depth hyps constraints state ->
-      let state, env, sigma, coq_proof_ctx_names, _ = get_current_env_sigma ~depth hyps constraints state in
+      let state, _, _, _ = get_current_env_sigma ~depth hyps constraints state in
       Feedback.msg_info Pp.(
         str (Format.asprintf "%a" API.Pp.constraints constraints) ++ spc () ++
         str (show_engine state));
@@ -961,8 +961,8 @@ be distinct).|};
           "constraints are put in the constraint store"))),
   (fun t _ ~depth hyps constraints state ->
      try
-       let state, env, sigma, coq_proof_ctx_names, gls = get_current_env_sigma ~depth hyps constraints state in
-       let sigma, ty = Typing.type_of env sigma t in
+       let state, coq_ctx, sigma, gls = get_current_env_sigma ~depth hyps constraints state in
+       let sigma, ty = Typing.type_of coq_ctx.env sigma t in
        let state, assignments = set_current_sigma ~depth state sigma in
        state, !: ty, gls @ assignments
      with Pretype_errors.PretypeError _ -> raise Pr.No_clause)),
@@ -978,7 +978,7 @@ be distinct).|};
           "Limitation: the resulting term has to be evar free (no "^
           "unresolved holes), shall be lifted in the future")))),
   (fun t _ _ ~depth hyps constraints state ->
-     let state, env, sigma, coq_proof_ctx_names, gls = get_current_env_sigma ~depth hyps constraints state in
+     let state, coq_ctx, sigma, gls = get_current_env_sigma ~depth hyps constraints state in
      (*let gt =
        (* To avoid turning named universes into unnamed ones *)
        Flags.with_option Constrextern.print_universes
@@ -986,7 +986,7 @@ be distinct).|};
      
      let sigma, uj_val, uj_type =
        Pretyping.understand_tcc_ty env sigma gt in*)
-     let sigma, uj_type = Typing.type_of env sigma t in let uj_val = t in
+     let sigma, uj_type = Typing.type_of coq_ctx.env sigma t in let uj_val = t in
      let state, assignments = set_current_sigma ~depth state sigma in
      state, !: uj_type +! uj_val, gls @ assignments)),
   DocAbove);
@@ -1001,7 +1001,7 @@ be distinct).|};
     Full "Calls Ltac1 tactic named Tac with arguments Args on goal G")))),
     (fun tac_name tac_args goal _ ~depth hyps constraints state ->
        let open Ltac_plugin in
-       let state, env, sigma, coq_proof_ctx_names, gls1 = get_current_env_sigma ~depth hyps constraints state in
+       let state, coq_ctx, sigma, gls1 = get_current_env_sigma ~depth hyps constraints state in
        let tactic =
          let ist, args =
            List.fold_right (fun t (ist,args) ->
@@ -1026,7 +1026,7 @@ be distinct).|};
            Unsafe.tclSETGOALS [with_empty_state goal] <*> tactic in
          let _, pv = init sigma [] in
          let (), pv, _, _ =
-           apply ~name:(Id.of_string "elpi") ~poly:false env focused_tac pv in
+           apply ~name:(Id.of_string "elpi") ~poly:false coq_ctx.env focused_tac pv in
          proofview pv in
        let state, assignments = set_current_sigma ~depth state sigma in
        let state, subgoals, gls2 =
@@ -1117,8 +1117,8 @@ be distinct).|};
   (fun t _ ~depth hyps constraints state ->
      let state, t, _gls =
        lp2constr ~tolerate_undef_evar:true ~depth hyps constraints state t in
-     let state, env, sigma, coq_proof_ctx_names, gls = get_current_env_sigma ~depth hyps constraints state in
-     let s = Pp.string_of_ppcmds (Printer.pr_econstr_env env sigma t) in
+     let state, coq_ctx, sigma, gls = get_current_env_sigma ~depth hyps constraints state in
+     let s = Pp.string_of_ppcmds (Printer.pr_econstr_env coq_ctx.env sigma t) in
      state, !: s, gls)),
   DocAbove);
 

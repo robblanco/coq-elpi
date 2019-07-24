@@ -128,11 +128,6 @@ and src_string = {
 }
 [@@deriving ord]
 
-let string_of_src = function
-  | File { fname } -> "file:" ^ fname
-  | EmbeddedString { sloc } -> "str:" ^ API.Ast.Loc.show sloc
-  | Database qn -> "db:" ^ show_qualified_name qn
-
 module SrcSet = Set.Make(struct type t = src let compare = compare_src end)
 
 let current_program = Summary.ref ~name:"elpi-cur-program-name" None
@@ -404,8 +399,10 @@ let run_static_check query =
   (* We turn a failure into a proper error in etc/coq-elpi_typechecker.elpi *)
   ignore (EC.static_check header ~checker:[api;checker ()] query)
 
+let default_max_step = 50000
+
 let trace_options = Summary.ref ~name:"elpi-trace" []
-let max_steps = Summary.ref ~name:"elpi-steps" max_int
+let max_steps = Summary.ref ~name:"elpi-steps" default_max_step
 let debug_vars = Summary.ref ~name:"elpi-debug" EC.StrSet.empty
 
 let debug vl = debug_vars := List.fold_right EC.StrSet.add vl EC.StrSet.empty 
@@ -414,7 +411,7 @@ let cc_flags () =
   { EC.default_flags with EC.defined_variables = !debug_vars }
 
 let bound_steps n =
-  if n <= 0 then max_steps := max_int else max_steps := n
+  if n <= 0 then max_steps := default_max_step else max_steps := n
 
 
 let run ~static_check ?(flags = cc_flags ()) program_ast query =
@@ -436,7 +433,8 @@ let run_and_print ~print ~static_check ?flags program_ast query_ast =
         program_ast query_ast
   with
   | API.Execute.Failure -> CErrors.user_err Pp.(str "elpi fails")
-  | API.Execute.NoMoreSteps -> CErrors.user_err Pp.(str "elpi run out of steps")
+  | API.Execute.NoMoreSteps ->
+      CErrors.user_err Pp.(str "elpi run out of steps ("++int !max_steps++str")")
   | API.Execute.Success {
      assignments ; constraints; state
     } ->
@@ -498,7 +496,7 @@ let run_program loc name args =
   let args = args |> List.map to_arg in
   let query ~depth state =
     let state, args = CList.fold_left_map
-      (Coq_elpi_goal_HOAS.in_elpi_global_arg ~depth (Global.env()))
+      (Coq_elpi_goal_HOAS.in_elpi_global_arg ~depth (Coq_elpi_HOAS.mk_coq_context state))
       state args in
     state, (Coq_elpi_utils.of_coq_loc loc, ET.mkApp mainc (EU.list_to_lp_list args) []) in
   let program_ast = get name in

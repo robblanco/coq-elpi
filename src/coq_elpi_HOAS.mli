@@ -7,8 +7,6 @@ open Elpi.API
 open Data
 open RawData
 
-type coq_proof_ctx_names = Name.t list * int (* the length of the list *)
-
 (* HOAS of terms *)
 val constr2lp :
   depth:int -> Data.hyps -> constraints -> State.t ->
@@ -23,8 +21,22 @@ val lp2constr :
 val get_global_env_sigma : State.t -> Environ.env * Evd.evar_map
 
 (* Coq's Engine synchronization *)
+type coq_context = {
+  section : Names.Id.t list;
+  section_len : int;
+  proof : EConstr.named_context;
+  proof_len : int;
+  local : EConstr.rel_context;
+  local_len : int;
+  db2name : Names.Id.t Int.Map.t;
+  name2db : int Names.Id.Map.t;
+  names : Names.Id.Set.t;
+  env : Environ.env;
+}
+val mk_coq_context : State.t -> coq_context
+
 val get_current_env_sigma : depth:int ->
-  Data.hyps -> constraints -> State.t -> State.t * Environ.env * Evd.evar_map * coq_proof_ctx_names * Conversion.extra_goals
+  Data.hyps -> constraints -> State.t -> State.t * coq_context * Evd.evar_map * Conversion.extra_goals
 val set_current_sigma : depth:int -> State.t -> Evd.evar_map -> State.t * Conversion.extra_goals
 
 type record_field_spec = { name : string; is_coercion : bool }
@@ -125,17 +137,17 @@ val mk_def :
 
 (* Push a name with a dummy type (just for globalization to work) and
  * pop it back *)
-val push_env : State.t -> Names.Name.t Context.binder_annot -> State.t
+val push_env : State.t -> Names.Name.t -> State.t
 val pop_env : State.t -> State.t
 
-val get_env : State.t -> Environ.env
+val get_global_env : State.t -> Environ.env
 val get_sigma : State.t -> Evd.evar_map
 
 val goal2query : Environ.env ->
   Evd.evar_map -> Goal.goal -> Elpi.API.Ast.Loc.t -> ?main:string -> 'a list -> 
       in_elpi_arg:(depth:int ->
-           Environ.env ->
-           coq2lp_ctx ->
+           coq_context ->
+           hyp list ->
            Evd.evar_map ->
            State.t ->
            'a -> State.t * term) -> depth:int -> 
