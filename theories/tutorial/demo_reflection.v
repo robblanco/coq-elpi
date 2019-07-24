@@ -84,11 +84,13 @@ solve [trm Op] [goal Ctx P {{ lp:A = lp:B }} _] _ :-std.time (
   close L) Tm1,
   !,
   Ty = {{ (interp lp:Op lp:L lp:AstA) = (interp lp:Op lp:L lp:AstB)}},
-  coq.say Ty,
-  std.time (Ctx => coq.elaborate {{ (fun x : lp:Ty => x) _ }} _ E) Tm2,
-  coq.say "elab=" E ":" Ty,
-  std.time (P = {{ (fun x : lp:Ty => x) _ }}) Tm3,
-  coq.say Tm1 Tm2 Tm3.
+  %coq.say Ty,
+  %std.time (Ctx => coq.elaborate {{ (fun x : lp:Ty => x) _ }} _ E) Tm2,
+  %coq.say "elab=" E ":" Ty,
+  %coq.sigma.print,
+  %std.time (P = E) Tm3,
+  P = {{ (fun x : lp:Ty => x) _ }}.
+  %coq.say Tm1 Tm2 Tm3.
 
 }}.
 Elpi Typecheck.
@@ -97,10 +99,9 @@ Tactic Notation "reify_step" constr(x) := elpi reify (x).
 
 Example axpypzpt2 (x : Z) : x = x.
 Proof.
-  Set Printing All.
-reify_step Z.add.
+  reify_step Z.add.
+  Show.
 stop.
-
 (* Now adding the reification phase. *)
 
 Class Reify (op : Z -> Z -> Z) (t : lang) (l : list Z) (x : Z).
