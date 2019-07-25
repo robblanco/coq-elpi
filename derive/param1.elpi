@@ -105,7 +105,7 @@ pred reali-store
   i:term.   % Translation
 reali-store N X XR :- !,
   Nreali is "reali_" ^ N,
-  Args = [hole, hole, X, XR],
+  Args = [_, _, X, XR],
   coq.elaborate (app [{{@elpi.derive.param1.store_reali}}|Args]) T2 T1,
   coq.env.add-const Nreali T1 T2 _ (global GR),
   coq.TC.declare-instance GR 0 tt.

@@ -20,7 +20,7 @@ Elpi Query lp:{{
   coq.env.const GR _BO TY,
   TY = {{ nat -> nat -> nat }},
   BO1 = (fix _ 0 TY add\
-         {{ fun n m => match n with
+         {{ fun n m : nat => match n with
               | O => m
               | S p => lp:{{ app[add, {{p}}, {{m}}] }}  
             end }}),

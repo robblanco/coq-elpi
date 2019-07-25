@@ -85,11 +85,11 @@ solve [trm Op] [goal Ctx P {{ lp:A = lp:B }} _] _ :-std.time (
   !,
   Ty = {{ (interp lp:Op lp:L lp:AstA) = (interp lp:Op lp:L lp:AstB)}},
   %coq.say Ty,
-  %std.time (Ctx => coq.elaborate {{ (fun x : lp:Ty => x) _ }} _ E) Tm2,
-  %coq.say "elab=" E ":" Ty,
+  std.time (Ctx => coq.elaborate {{ (fun x : lp:Ty => x) _ }} _ E) Tm2,
+  coq.say "elab=" E ":" Ty.
   %coq.sigma.print,
   %std.time (P = E) Tm3,
-  P = {{ (fun x : lp:Ty => x) _ }}.
+  % P = {{ (fun x : lp:Ty => x) _ }}.
   %coq.say Tm1 Tm2 Tm3.
 
 }}.

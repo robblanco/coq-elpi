@@ -319,7 +319,7 @@ Elpi Query lp:{{
   coq.locate "nat" GRNat, Nat = global GRNat,
   coq.locate "O" GRZero, Zero = global GRZero,
   coq.locate "list" GRList, List = global GRList,
-  L  = app [ Cons, hole, Zero, app [ Nil, hole ]],
+  L  = app [ Cons, _, Zero, app [ Nil, _ ]],
   LE = app [ Cons, Nat, Zero, app [ Nil, Nat ]],
   coq.elaborate L (app [ List, Nat ]) LE.
 }}.
